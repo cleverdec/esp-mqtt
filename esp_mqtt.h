@@ -19,6 +19,35 @@ typedef void (*esp_mqtt_status_callback_t)(esp_mqtt_status_t);
  */
 typedef void (*esp_mqtt_message_callback_t)(const char *topic, uint8_t *payload, size_t len);
 
+typedef struct {
+  char *host;
+  char *port;
+  char *client_id;
+  char *username;
+  char *password;
+} esp_mqtt_config_t;
+
+/**
+ * Structure of mqtt config
+ */
+typedef struct
+{
+	esp_mqtt_status_callback_t esp_mqtt_status_callback;
+	esp_mqtt_message_callback_t esp_mqtt_message_callback;
+	size_t esp_mqtt_buffer_size;
+	uint32_t esp_mqtt_command_timeout;
+	void *esp_mqtt_write_buffer;
+	void *esp_mqtt_read_buffer;
+	SemaphoreHandle_t esp_mqtt_main_mutex;
+	SemaphoreHandle_t esp_mqtt_select_mutex;
+	QueueHandle_t esp_mqtt_event_queue;
+	TaskHandle_t esp_mqtt_task;
+	bool esp_mqtt_running;
+	bool esp_mqtt_connected;
+	bool esp_mqtt_error;
+	esp_mqtt_config_t esp_mqtt_cfg;
+} esp_mqtt_settings_t;
+
 /**
  * Initialize the MQTT management system.
  *
@@ -28,8 +57,10 @@ typedef void (*esp_mqtt_message_callback_t)(const char *topic, uint8_t *payload,
  * @param mcb - The message callback.
  * @param buffer_size - The read and write buffer size.
  * @param command_timeout - The command timeout.
+ *
+ * @return Identifier of mqtt structure
  */
-void esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_message_callback_t mcb, size_t buffer_size,
+esp_mqtt_config_t *esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_message_callback_t mcb, size_t buffer_size,
                    int command_timeout);
 
 /**
@@ -70,9 +101,12 @@ bool esp_mqtt_tls(bool verify, const unsigned char * cacert, size_t cacert_len);
  * @param client_id - The client id.
  * @param username - The client username.
  * @param password - The client password.
+ * @param settings - Pointer to esp_mqtt_settings which esp_mqtt_init() initializate before.
+ *
+ * @return ESP_OK if all good, ESP_ERR_INVALID_ARG if bad arguments or ESP_ERR_NO_MEM if not enough memory
  */
-void esp_mqtt_start(const char *host, const char *port, const char *client_id, const char *username,
-                    const char *password);
+esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_id, const char *username,
+                    const char *password, esp_mqtt_settings_t *settings);
 
 /**
  * Subscribe to specified topic.
@@ -124,5 +158,15 @@ bool esp_mqtt_publish(const char *topic, uint8_t *payload, size_t len, int qos, 
  * Will stop initial connection attempts or disconnect any active connection.
  */
 void esp_mqtt_stop();
+
+/**
+ * Function delete mqtt config
+ */
+void esp_mqtt_delete(esp_mqtt_config_t *cfg);
+
+/**
+ * Function clear esp_mqtt_cfg
+ */
+void esp_mqtt_clear_cfg(esp_mqtt_config_t *cfg);
 
 #endif  // ESP_MQTT_H

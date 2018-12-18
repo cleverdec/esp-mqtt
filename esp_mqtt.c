@@ -15,34 +15,11 @@
 
 #define ESP_MQTT_LOG_TAG "esp_mqtt"
 
-static SemaphoreHandle_t esp_mqtt_main_mutex = NULL;
-
-#define ESP_MQTT_LOCK_MAIN() \
+#define ESP_MQTT_LOCK(mutex) \
   do {                       \
-  } while (xSemaphoreTake(esp_mqtt_main_mutex, portMAX_DELAY) != pdPASS)
+  } while (xSemaphoreTake(mutex, portMAX_DELAY) != pdPASS)
 
-#define ESP_MQTT_UNLOCK_MAIN() xSemaphoreGive(esp_mqtt_main_mutex)
-
-static SemaphoreHandle_t esp_mqtt_select_mutex = NULL;
-
-#define ESP_MQTT_LOCK_SELECT() \
-  do {                         \
-  } while (xSemaphoreTake(esp_mqtt_select_mutex, portMAX_DELAY) != pdPASS)
-
-#define ESP_MQTT_UNLOCK_SELECT() xSemaphoreGive(esp_mqtt_select_mutex)
-
-static TaskHandle_t esp_mqtt_task = NULL;
-
-static size_t esp_mqtt_buffer_size;
-static uint32_t esp_mqtt_command_timeout;
-
-static struct {
-  char *host;
-  char *port;
-  char *client_id;
-  char *username;
-  char *password;
-} esp_mqtt_config = {.host = NULL, .port = NULL, .client_id = NULL, .username = NULL, .password = NULL};
+#define ESP_MQTT_UNLOCK(mutex) xSemaphoreGive(mutex)
 
 static struct {
   char *topic;
@@ -50,13 +27,6 @@ static struct {
   int qos;
   bool retained;
 } esp_mqtt_lwt_config = {.topic = NULL, .payload = NULL, .qos = 0, .retained = false};
-
-static bool esp_mqtt_running = false;
-static bool esp_mqtt_connected = false;
-static bool esp_mqtt_error = false;
-
-static esp_mqtt_status_callback_t esp_mqtt_status_callback = NULL;
-static esp_mqtt_message_callback_t esp_mqtt_message_callback = NULL;
 
 static lwmqtt_client_t esp_mqtt_client;
 
@@ -101,24 +71,44 @@ bool esp_mqtt_tls(bool verify, const unsigned char * cacert, size_t cacert_len) 
 }
 #endif
 
-void esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_message_callback_t mcb, size_t buffer_size,
-                   int command_timeout) {
+esp_mqtt_config_t *esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_message_callback_t mcb, size_t buffer_size,
+                   	   	   	   	 int command_timeout)
+{
+  esp_mqtt_settings_t *settings = calloc(1, sizeof(esp_mqtt_settings_t));
+  if (!settings)
+  {
+	  ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_init:%s", "Can't allocate memory");
+	  return(NULL);
+  }
   // set callbacks
-  esp_mqtt_status_callback = scb;
-  esp_mqtt_message_callback = mcb;
-  esp_mqtt_buffer_size = buffer_size;
-  esp_mqtt_command_timeout = (uint32_t)command_timeout;
+  settings->esp_mqtt_status_callback = scb;
+  settings->esp_mqtt_message_callback = mcb;
+  settings->esp_mqtt_buffer_size = buffer_size;
+  settings->esp_mqtt_command_timeout = (uint32_t)command_timeout;
 
   // allocate buffers
-  esp_mqtt_write_buffer = malloc((size_t)buffer_size);
-  esp_mqtt_read_buffer = malloc((size_t)buffer_size);
+  settings->esp_mqtt_write_buffer = calloc((size_t)buffer_size, sizeof(char));
+  settings->esp_mqtt_read_buffer = calloc((size_t)buffer_size, sizeof(char));
 
   // create mutexes
-  esp_mqtt_main_mutex = xSemaphoreCreateMutex();
-  esp_mqtt_select_mutex = xSemaphoreCreateMutex();
+  settings->esp_mqtt_main_mutex = xSemaphoreCreateMutex();
+  settings->esp_mqtt_select_mutex = xSemaphoreCreateMutex();
 
   // create queue
-  esp_mqtt_event_queue = xQueueCreate(CONFIG_ESP_MQTT_EVENT_QUEUE_SIZE, sizeof(esp_mqtt_event_t *));
+  settings->esp_mqtt_event_queue = xQueueCreate(CONFIG_ESP_MQTT_EVENT_QUEUE_SIZE, sizeof(esp_mqtt_event_t *));
+
+  if (!settings->esp_mqtt_write_buffer || !settings->esp_mqtt_read_buffer
+	  || !settings->esp_mqtt_main_mutex || !settings->esp_mqtt_select_mutex
+	  || !settings->esp_mqtt_event_queue)
+  {
+	  esp_mqtt_delete(settings);
+	  ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_init:%s", "Can't allocate memory");
+	  return(NULL);
+  }
+  else
+  {
+	  return(settings);
+  }
 }
 
 static void esp_mqtt_message_handler(lwmqtt_client_t *client, void *ref, lwmqtt_string_t topic, lwmqtt_message_t msg) {
@@ -258,8 +248,9 @@ static bool esp_mqtt_process_connect() {
 
   // attempt connection
   lwmqtt_return_code_t return_code;
-  err =
-      lwmqtt_connect(&esp_mqtt_client, options, will.topic.len ? &will : NULL, &return_code, esp_mqtt_command_timeout);
+  err = lwmqtt_connect(&esp_mqtt_client, options,
+						 will.topic.len ? &will : NULL, &return_code,
+						 esp_mqtt_command_timeout);
   if (err != LWMQTT_SUCCESS) {
     ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_connect: %d", err);
     return false;
@@ -466,90 +457,92 @@ void esp_mqtt_lwt(const char *topic, const char *payload, int qos, bool retained
   ESP_MQTT_UNLOCK_MAIN();
 }
 
-void esp_mqtt_start(const char *host, const char *port, const char *client_id, const char *username,
-                    const char *password) {
+esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_id, const char *username,
+                    const char *password, esp_mqtt_settings_t *settings)
+{
+  bool err_memory = false;
   // acquire mutex
-  ESP_MQTT_LOCK_MAIN();
+  ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
   #if (defined(CONFIG_ESP_MQTT_TLS_ONLY))
     if (esp_tls_mqtt_network.enable == false) {
       ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: Call esp_mqtt_tls() before!");
       ESP_MQTT_UNLOCK_MAIN();
-      return;
+      return ESP_FAIL;
     }
   #endif
   // check if already running
-  if (esp_mqtt_running) {
+  if (settings->esp_mqtt_running) {
     ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_start: already running");
-    ESP_MQTT_UNLOCK_MAIN();
-    return;
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+    return ESP_OK;
   }
 
-  // free host if set
-  if (esp_mqtt_config.host != NULL) {
-    free(esp_mqtt_config.host);
-    esp_mqtt_config.host = NULL;
-  }
+  esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
 
-  // free port if set
-  if (esp_mqtt_config.port != NULL) {
-    free(esp_mqtt_config.port);
-    esp_mqtt_config.port = NULL;
+  if (host == NULL || port == NULL)
+  {
+	 ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: host or port = NULL");
+	 return ESP_ERR_INVALID_ARG;
   }
+  else
+  {
+	  // set host
+	  settings->esp_mqtt_cfg.host = strdup(host);
+	  (!settings->esp_mqtt_cfg.host) ? err_memory = true : 0;
 
-  // free client id if set
-  if (esp_mqtt_config.client_id != NULL) {
-    free(esp_mqtt_config.client_id);
-    esp_mqtt_config.client_id = NULL;
-  }
-
-  // free username if set
-  if (esp_mqtt_config.username != NULL) {
-    free(esp_mqtt_config.username);
-    esp_mqtt_config.username = NULL;
-  }
-
-  // free password if set
-  if (esp_mqtt_config.password != NULL) {
-    free(esp_mqtt_config.password);
-    esp_mqtt_config.password = NULL;
-  }
-
-  // set host if provided
-  if (host != NULL) {
-    esp_mqtt_config.host = strdup(host);
-  }
-
-  // set port if provided
-  if (port != NULL) {
-    esp_mqtt_config.port = strdup(port);
+	  //set port
+	  settings->esp_mqtt_cfg.port = strdup(port);
+	  (!settings->esp_mqtt_cfg.port) ? err_memory = true : 0;
   }
 
   // set client id if provided
-  if (client_id != NULL) {
-    esp_mqtt_config.client_id = strdup(client_id);
+  if (client_id != NULL)
+  {
+	settings->esp_mqtt_cfg.client_id = strdup(client_id);
+    (!settings->esp_mqtt_cfg.client_id) ? err_memory = true : 0;
   }
 
   // set username if provided
-  if (username != NULL) {
-    esp_mqtt_config.username = strdup(username);
+  if (username != NULL)
+  {
+    settings->esp_mqtt_cfg.username = strdup(username);
+    (!settings->esp_mqtt_cfg.username) ? err_memory = true : 0;
   }
 
   // set password if provided
-  if (password != NULL) {
-    esp_mqtt_config.password = strdup(password);
+  if (password != NULL)
+  {
+	  settings->esp_mqtt_cfg.password = strdup(password);
+	  (!settings->esp_mqtt_cfg.password) ? err_memory = true : 0;
+  }
+
+  if (err_memory)
+  {
+	  esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
+	  ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: No memory for allocate esp_mqtt_cfg");
+	  ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+	  return ESP_ERR_NO_MEM;
   }
 
   // create mqtt thread
   ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_start: create task");
   xTaskCreatePinnedToCore(esp_mqtt_process, "esp_mqtt", CONFIG_ESP_MQTT_TASK_STACK_SIZE, NULL,
-                          CONFIG_ESP_MQTT_TASK_STACK_PRIORITY, &esp_mqtt_task, 1);
+                          CONFIG_ESP_MQTT_TASK_STACK_PRIORITY, &settings->esp_mqtt_task, 1);
 
+  if (!settings->esp_mqtt_task)
+  {
+	  esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
+	  ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: No memory for allocate esp_mqtt task");
+	  ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+	  return ESP_ERR_NO_MEM;
+  }
   // set local flag
-  esp_mqtt_running = true;
+  settings->esp_mqtt_running = true;
 
   // release mutex
-  ESP_MQTT_UNLOCK_MAIN();
+  ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+  return ESP_OK;
 }
 
 bool esp_mqtt_subscribe(const char *topic, int qos) {
@@ -684,4 +677,93 @@ void esp_mqtt_stop() {
   // release mutexes
   ESP_MQTT_UNLOCK_SELECT();
   ESP_MQTT_UNLOCK_MAIN();
+}
+
+void esp_mqtt_delete(esp_mqtt_settings_t *settings)
+{
+	if (settings)
+	{
+		if (settings->esp_mqtt_main_mutex)
+		{
+			ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
+		}
+		if (settings->esp_mqtt_select_mutex)
+		{
+			ESP_MQTT_LOCK(settings->esp_mqtt_select_mutex);
+		}
+
+		if (settings->esp_mqtt_task)
+		{
+			//TODO delete all in task if need
+			{
+
+			}
+			vTaskDelete(settings->esp_mqtt_task);
+		}
+		(settings->esp_mqtt_event_queue) ? vQueueDelete(settings->esp_mqtt_event_queue) : 0;
+		if (settings->esp_mqtt_read_buffer)
+		{
+			memset(settings->esp_mqtt_read_buffer, 0, settings->esp_mqtt_buffer_size);
+			free(settings->esp_mqtt_read_buffer);
+		}
+		if (settings->esp_mqtt_write_buffer)
+		{
+			memset(settings->esp_mqtt_write_buffer, 0, settings->esp_mqtt_buffer_size);
+			free(settings->esp_mqtt_write_buffer);
+		}
+
+		if (settings->esp_mqtt_select_mutex)
+		{
+			ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
+		}
+		if (settings->esp_mqtt_main_mutex)
+		{
+			ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+		}
+
+		vSemaphoreDelete(settings->esp_mqtt_main_mutex);
+		vSemaphoreDelete(settings->esp_mqtt_select_mutex);
+
+		esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
+
+		memset(settings, 0, sizeof(esp_mqtt_settings_t));
+		free(settings);
+	}
+}
+
+void esp_mqtt_clear_cfg(esp_mqtt_config_t *cfg)
+{
+	if (cfg)
+	{
+		if (cfg->host)
+		{
+			memset(cfg->host, 0, strlen(cfg->host));
+			free(cfg->host);
+			cfg->host = NULL;
+		}
+		if (cfg->port)
+		{
+			memset(cfg->port, 0, strlen(cfg->port));
+			free(cfg->port);
+			cfg->port = NULL;
+		}
+		if (cfg->client_id)
+		{
+			memset(cfg->client_id, 0, strlen(cfg->client_id));
+			free(cfg->client_id);
+			cfg->client_id = NULL;
+		}
+		if (cfg->username)
+		{
+			memset(cfg->username, 0, strlen(cfg->username));
+			free(cfg->username);
+			cfg->username = NULL;
+		}
+		if (cfg->password)
+		{
+			memset(cfg->password, 0, strlen(cfg->password));
+			free(cfg->password);
+			cfg->password = NULL;
+		}
+	}
 }
