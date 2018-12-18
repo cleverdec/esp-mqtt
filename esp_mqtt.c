@@ -259,54 +259,69 @@ static bool esp_mqtt_process_connect() {
   return true;
 }
 
-static void esp_mqtt_process(void *p) {
+static void esp_mqtt_process(void *pvParameters) {
+
+  esp_mqtt_settings_t *settings;
   // connection loop
+  if (!pvParameters)
+  {
+	  vTaskDelete(NULL);
+	  return;
+  }
+  else
+  {
+	  settings = (esp_mqtt_settings_t *)pvParameters;
+  }
   for (;;) {
     // log attempt
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: begin connection attempt");
+    ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: begin connection to %s:%s attempt",
+    		 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
 
     // acquire mutex
-    ESP_MQTT_LOCK_MAIN();
+    ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
     // make connection attempt
-    if (esp_mqtt_process_connect()) {
+    if (esp_mqtt_process_connect(settings)) {
       // log success
-      ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: connection attempt successful");
+      ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: connection to %s:%s attempt successful",
+    		   settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
 
       // set local flag
-      esp_mqtt_connected = true;
+      settings->esp_mqtt_connected = true;
 
       // release mutex
-      ESP_MQTT_UNLOCK_MAIN();
+      ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
       // exit loop
       break;
     }
 
     // release mutex
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
     // log fail
-    ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_process: connection attempt failed");
+    ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_process: connection to %s:%s attempt failed",
+    		 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
 
     // delay loop by 1s and yield to other processes
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
   // call callback if existing
-  if (esp_mqtt_status_callback) {
-    esp_mqtt_status_callback(ESP_MQTT_STATUS_CONNECTED);
+  if (settings->esp_mqtt_status_callback)
+  {
+    esp_mqtt_status_callback(settings, ESP_MQTT_STATUS_CONNECTED);
   }
 
   // yield loop
   for (;;) {
     // check for error
-    if (esp_mqtt_error) {
+    if (settings->esp_mqtt_error) {
       break;
     }
 
     // acquire select mutex
-    ESP_MQTT_LOCK_SELECT();
+    ESP_MQTT_LOCK(settings->esp_mqtt_select_mutex);
 
     // block until data is available
     bool available = false;
@@ -321,20 +336,21 @@ static void esp_mqtt_process(void *p) {
         err = esp_lwmqtt_network_select(&esp_mqtt_network, &available, esp_mqtt_command_timeout);
       }
     #else
-      err = esp_lwmqtt_network_select(&esp_mqtt_network, &available, esp_mqtt_command_timeout);
+      err = esp_lwmqtt_network_select(settings, &available);
     #endif
 
     if (err != LWMQTT_SUCCESS) {
-      ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_select: %d", err);
-      ESP_MQTT_UNLOCK_SELECT();
+      ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_select: host: %s:%s: %d",
+    		   settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+      ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
       break;
     }
 
     // release select mutex
-    ESP_MQTT_UNLOCK_SELECT();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
 
     // acquire mutex
-    ESP_MQTT_LOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
     // process data if available
     if (available) {
@@ -350,37 +366,42 @@ static void esp_mqtt_process(void *p) {
             err = esp_lwmqtt_network_peek(&esp_mqtt_network, &available_bytes);
         }
       #else
-        err = esp_lwmqtt_network_peek(&esp_mqtt_network, &available_bytes);
+        err = esp_lwmqtt_network_peek(settings, &available_bytes);
       #endif
 
       if (err != LWMQTT_SUCCESS) {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_peek: %d", err);
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_peek: host: %s:%s: %d",
+        		 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         break;
       }
 
       // yield client only if there is still data to read since select might unblock because of incoming ack packets
       // that are already handled until we get to this point
       if (available_bytes > 0) {
-        err = lwmqtt_yield(&esp_mqtt_client, available_bytes, esp_mqtt_command_timeout);
+        err = lwmqtt_yield(settings, available_bytes);
         if (err != LWMQTT_SUCCESS) {
-          ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_yield: %d", err);
-          ESP_MQTT_UNLOCK_MAIN();
+          ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_yield: host: %s:%s: %d",
+        		   settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+          ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
           break;
         }
       }
     }
 
     // do mqtt background work
-    err = lwmqtt_keep_alive(&esp_mqtt_client, esp_mqtt_command_timeout);
+    err = lwmqtt_keep_alive(settings);
     if (err != LWMQTT_SUCCESS) {
-      ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_keep_alive: %d", err);
-      ESP_MQTT_UNLOCK_MAIN();
+      ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_keep_alive: host: %s:%s: %d",
+        	   settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+      ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
       break;
     }
 
     // release mutex
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+
+    ///////////////////////////////////////////////////////// continue from here !!!!!!!!!!!!!!!!
 
     // dispatch queued events
     esp_mqtt_dispatch_events();
@@ -527,7 +548,7 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
 
   // create mqtt thread
   ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_start: create task");
-  xTaskCreatePinnedToCore(esp_mqtt_process, "esp_mqtt", CONFIG_ESP_MQTT_TASK_STACK_SIZE, NULL,
+  xTaskCreatePinnedToCore(esp_mqtt_process, "esp_mqtt", CONFIG_ESP_MQTT_TASK_STACK_SIZE, settings,
                           CONFIG_ESP_MQTT_TASK_STACK_PRIORITY, &settings->esp_mqtt_task, 1);
 
   if (!settings->esp_mqtt_task)
