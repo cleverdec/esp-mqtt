@@ -504,45 +504,45 @@ static void esp_mqtt_process(void *pvParameters)
 }
 
 void esp_mqtt_lwt(const char *topic, const char *payload, int qos,
-bool retained)
+				  bool retained, esp_mqtt_settings_t *settings)
 {
     // acquire mutex
-    ESP_MQTT_LOCK_MAIN();
+    ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
     // free topic if set
-    if (esp_mqtt_lwt_config.topic != NULL)
+    if (settings->esp_mqtt_lwt_config.topic != NULL)
     {
-        free(esp_mqtt_lwt_config.topic);
-        esp_mqtt_lwt_config.topic = NULL;
+        free(settings->esp_mqtt_lwt_config.topic);
+        settings->esp_mqtt_lwt_config.topic = NULL;
     }
 
     // free payload if set
-    if (esp_mqtt_lwt_config.payload != NULL)
+    if (settings->esp_mqtt_lwt_config.payload != NULL)
     {
-        free(esp_mqtt_lwt_config.payload);
-        esp_mqtt_lwt_config.payload = NULL;
+        free(settings->esp_mqtt_lwt_config.payload);
+        settings->esp_mqtt_lwt_config.payload = NULL;
     }
 
     // set topic if provided
     if (topic != NULL)
     {
-        esp_mqtt_lwt_config.topic = strdup(topic);
+    	settings->esp_mqtt_lwt_config.topic = strdup(topic);
     }
 
     // set payload if provided
     if (payload != NULL)
     {
-        esp_mqtt_lwt_config.payload = strdup(payload);
+        settings->esp_mqtt_lwt_config.payload = strdup(payload);
     }
 
     // set qos
-    esp_mqtt_lwt_config.qos = qos;
+    settings->esp_mqtt_lwt_config.qos = qos;
 
     // set retained
-    esp_mqtt_lwt_config.retained = retained;
+    settings->esp_mqtt_lwt_config.retained = retained;
 
     // release mutex
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 }
 
 esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_id,
@@ -649,63 +649,63 @@ bool esp_mqtt_subscribe(esp_mqtt_settings_t *settings, const char *topic, int qo
     }
 
     // subscribe to topic
-    lwmqtt_err_t err = lwmqtt_subscribe_one(&esp_mqtt_client, lwmqtt_string(topic),
-            (lwmqtt_qos_t) qos, esp_mqtt_command_timeout);
+    lwmqtt_err_t err = lwmqtt_subscribe_one(&settings->esp_mqtt_client, lwmqtt_string(topic),
+            (lwmqtt_qos_t) qos, settings->esp_mqtt_command_timeout);
     if (err != LWMQTT_SUCCESS)
     {
-        esp_mqtt_error = true;
+        settings->esp_mqtt_error = true;
         ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_subscribe_one: %d", err);
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
 
     // release mutex
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
     return true;
 }
 
-bool esp_mqtt_unsubscribe(const char *topic)
+bool esp_mqtt_unsubscribe(esp_mqtt_settings_t *settings, const char *topic)
 {
     // acquire mutex
-    ESP_MQTT_LOCK_MAIN();
+    ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
     // check if still connected
-    if (!esp_mqtt_connected)
+    if (!settings->esp_mqtt_connected)
     {
         ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_unsubscribe: not connected");
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
 
     // unsubscribe from topic
-    lwmqtt_err_t err = lwmqtt_unsubscribe_one(&esp_mqtt_client, lwmqtt_string(topic),
-            esp_mqtt_command_timeout);
+    lwmqtt_err_t err = lwmqtt_unsubscribe_one(&settings->esp_mqtt_client, lwmqtt_string(topic),
+            settings->esp_mqtt_command_timeout);
     if (err != LWMQTT_SUCCESS)
     {
-        esp_mqtt_error = true;
+        settings->esp_mqtt_error = true;
         ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_unsubscribe_one: %d", err);
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
 
     // release mutex
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
     return true;
 }
 
-bool esp_mqtt_publish(const char *topic, uint8_t *payload, size_t len, int qos,
+bool esp_mqtt_publish(esp_mqtt_settings_t *settings, const char *topic, uint8_t *payload, size_t len, int qos,
 bool retained)
 {
     // acquire mutex
-    ESP_MQTT_LOCK_MAIN();
+    ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
     // check if still connected
-    if (!esp_mqtt_connected)
+    if (!settings->esp_mqtt_connected)
     {
         ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_publish: not connected");
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
 
@@ -717,75 +717,81 @@ bool retained)
     message.payload_len = len;
 
     // publish message
-    lwmqtt_err_t err = lwmqtt_publish(&esp_mqtt_client, lwmqtt_string(topic), message,
-            esp_mqtt_command_timeout);
+    lwmqtt_err_t err = lwmqtt_publish(&settings->esp_mqtt_client, lwmqtt_string(topic), message,
+            settings->esp_mqtt_command_timeout);
     if (err != LWMQTT_SUCCESS)
     {
-        esp_mqtt_error = true;
+        settings->esp_mqtt_error = true;
         ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_publish: %d", err);
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
 
     // release mutex
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
     return true;
 }
 
-void esp_mqtt_stop()
+void esp_mqtt_stop(esp_mqtt_settings_t *settings)
 {
     // acquire mutexes
-    ESP_MQTT_LOCK_MAIN();
-    ESP_MQTT_LOCK_SELECT();
+    ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
+    ESP_MQTT_LOCK(settings->esp_mqtt_select_mutex);
 
     // return immediately if not running anymore
-    if (!esp_mqtt_running)
+    if (!settings->esp_mqtt_running)
     {
-        ESP_MQTT_UNLOCK_SELECT();
-        ESP_MQTT_UNLOCK_MAIN();
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return;
     }
 
     // attempt to properly disconnect a connected client
-    if (esp_mqtt_connected)
+    if (settings->esp_mqtt_connected)
     {
-        lwmqtt_err_t err = lwmqtt_disconnect(&esp_mqtt_client, esp_mqtt_command_timeout);
+        lwmqtt_err_t err = lwmqtt_disconnect(&settings->esp_mqtt_client, settings->esp_mqtt_command_timeout);
         if (err != LWMQTT_SUCCESS)
         {
             ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_disconnect: %d", err);
         }
 
         // set flag
-        esp_mqtt_connected = false;
+        settings->esp_mqtt_connected = false;
     }
 
     // disconnect network
 #if (defined(CONFIG_ESP_MQTT_TLS_ENABLE) && defined(CONFIG_ESP_MQTT_TLS_ONLY))
-    esp_tls_lwmqtt_network_disconnect(&esp_tls_mqtt_network);
-#elif defined(CONFIG_ESP_MQTT_TLS_ENABLE)
-    if (esp_tls_mqtt_network.enable)
     {
-        esp_tls_lwmqtt_network_disconnect(&esp_tls_mqtt_network);
+    esp_tls_lwmqtt_network_disconnect(&settings->esp_tls_mqtt_network);
+    }
+#elif defined(CONFIG_ESP_MQTT_TLS_ENABLE)
+    {
+    if (settings->esp_tls_mqtt_network.enable)
+    {
+        esp_tls_lwmqtt_network_disconnect(&settings->esp_tls_mqtt_network);
     }
     else
     {
-        esp_lwmqtt_network_disconnect(&esp_mqtt_network);
+        esp_lwmqtt_network_disconnect(&settings->esp_mqtt_network);
+    }
     }
 #else
-    esp_lwmqtt_network_disconnect(&esp_mqtt_network);
+    {
+    esp_lwmqtt_network_disconnect(&settings->esp_mqtt_network);
+    }
 #endif
 
     // kill mqtt task
     ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_stop: deleting task");
-    vTaskDelete(esp_mqtt_task);
+    vTaskDelete(settings->esp_mqtt_task);
 
     // set flag
-    esp_mqtt_running = false;
+    settings->esp_mqtt_running = false;
 
     // release mutexes
-    ESP_MQTT_UNLOCK_SELECT();
-    ESP_MQTT_UNLOCK_MAIN();
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
+    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 }
 
 void esp_mqtt_delete(esp_mqtt_settings_t *settings)
@@ -803,11 +809,11 @@ void esp_mqtt_delete(esp_mqtt_settings_t *settings)
 
         if (settings->esp_mqtt_task)
         {
-            //TODO delete all in task if need
-            {
-
-            }
-            vTaskDelete(settings->esp_mqtt_task);
+            ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
+            ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+            esp_mqtt_stop(settings);
+            ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
+            ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
         }
         (settings->esp_mqtt_event_queue) ? vQueueDelete(settings->esp_mqtt_event_queue) : 0;
         if (settings->esp_mqtt_read_buffer)
@@ -833,6 +839,17 @@ void esp_mqtt_delete(esp_mqtt_settings_t *settings)
         vSemaphoreDelete(settings->esp_mqtt_main_mutex);
         vSemaphoreDelete(settings->esp_mqtt_select_mutex);
 
+#if !(defined(CONFIG_ESP_MQTT_TLS_ENABLE) && defined(CONFIG_ESP_MQTT_TLS_ONLY))
+        {
+        	memset(&settings->esp_mqtt_network, 0, sizeof(esp_lwmqtt_network_t));
+        }
+#endif
+#if defined(CONFIG_ESP_MQTT_TLS_ENABLE)
+        {
+        	memset(&settings->esp_tls_mqtt_network, 0, sizeof(esp_tls_lwmqtt_network_t));
+        }
+#endif
+        esp_mqtt_lwt_clear_cfg(&settings->esp_mqtt_lwt_config);
         esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
 
         memset(settings, 0, sizeof(esp_mqtt_settings_t));
@@ -875,4 +892,21 @@ void esp_mqtt_clear_cfg(esp_mqtt_config_t *cfg)
             cfg->password = NULL;
         }
     }
+}
+
+void esp_mqtt_lwt_clear_cfg(esp_mqtt_lwt_config_t *cfg)
+{
+    if (cfg->topic)
+    {
+        memset(cfg->topic, 0, strlen(cfg->topic));
+        free(cfg->topic);
+        cfg->topic = NULL;
+    }
+    if (cfg->payload)
+    {
+        memset(cfg->payload, 0, strlen(cfg->payload));
+        free(cfg->payload);
+        cfg->payload = NULL;
+    }
+    memset(cfg, 0, sizeof(esp_mqtt_lwt_config_t));
 }

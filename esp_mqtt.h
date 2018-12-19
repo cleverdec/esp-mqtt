@@ -12,6 +12,7 @@
 #include <lwmqtt.h>
 #include <stdio.h>
 #include <string.h>
+#include <esp_err.h>
 
 #if defined(CONFIG_ESP_MQTT_TLS_ENABLE)
 #include "esp_tls_lwmqtt.h"
@@ -106,7 +107,7 @@ esp_mqtt_settings_t *esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_mess
  * @param qos - The LWT QoS level.
  * @param retained - The LWT retained flag.
  */
-void esp_mqtt_lwt(const char *topic, const char *payload, int qos, bool retained);
+void esp_mqtt_lwt(const char *topic, const char *payload, int qos, bool retained, esp_mqtt_settings_t *settings);
 
 #if defined(CONFIG_ESP_MQTT_TLS_ENABLE)
 /**
@@ -153,7 +154,7 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
  * @param qos - The qos level.
  * @return Whether the operation was successful.
  */
-bool esp_mqtt_subscribe(const char *topic, int qos);
+bool esp_mqtt_subscribe(esp_mqtt_settings_t *settings, const char *topic, int qos);
 
 /**
  * Unsubscribe from specified topic.
@@ -166,7 +167,7 @@ bool esp_mqtt_subscribe(const char *topic, int qos);
  * @param topic - The topic.
  * @return Whether the operation was successful.
  */
-bool esp_mqtt_unsubscribe(const char *topic);
+bool esp_mqtt_unsubscribe(esp_mqtt_settings_t *settings, const char *topic);
 
 /**
  * Publish bytes payload to specified topic.
@@ -183,14 +184,14 @@ bool esp_mqtt_unsubscribe(const char *topic);
  * @param retained - The retained flag.
  * @return Whether the operation was successful.
  */
-bool esp_mqtt_publish(const char *topic, uint8_t *payload, size_t len, int qos, bool retained);
+bool esp_mqtt_publish(esp_mqtt_settings_t *settings, const char *topic, uint8_t *payload, size_t len, int qos, bool retained);
 
 /**
  * Stop the MQTT process.
  *
  * Will stop initial connection attempts or disconnect any active connection.
  */
-void esp_mqtt_stop();
+void esp_mqtt_stop(esp_mqtt_settings_t *settings);
 
 /**
  * Function delete mqtt config
@@ -201,5 +202,10 @@ void esp_mqtt_delete(esp_mqtt_settings_t *settings);
  * Function clear esp_mqtt_cfg
  */
 void esp_mqtt_clear_cfg(esp_mqtt_config_t *cfg);
+
+/**
+ * Function clear esp_mqtt_lwt_cfg
+ */
+void esp_mqtt_lwt_clear_cfg(esp_mqtt_lwt_config_t *cfg);
 
 #endif  // ESP_MQTT_H
