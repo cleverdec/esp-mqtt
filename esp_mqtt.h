@@ -1,18 +1,23 @@
 #ifndef ESP_MQTT_H
 #define ESP_MQTT_H
 
+#include <esp_log.h>
+#include <sdkconfig.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <lwmqtt.h>
+#include <stdio.h>
+#include <string.h>
 
-/**
- * The statuses emitted by the status callback.
- */
-typedef enum esp_mqtt_status_t { ESP_MQTT_STATUS_DISCONNECTED, ESP_MQTT_STATUS_CONNECTED } esp_mqtt_status_t;
+#if defined(CONFIG_ESP_MQTT_TLS_ENABLE)
+#include "esp_tls_lwmqtt.h"
+#endif
 
-/**
- * The status callback.
- */
-typedef void (*esp_mqtt_status_callback_t)(esp_mqtt_status_t);
+#include "esp_lwmqtt.h"
 
 /**
  * The message callback.
@@ -26,6 +31,25 @@ typedef struct {
   char *username;
   char *password;
 } esp_mqtt_config_t;
+
+typedef struct
+{
+    char *topic;
+    char *payload;
+    int qos;
+    bool retained;
+} esp_mqtt_lwt_config_t;
+
+/**
+ * The statuses emitted by the status callback.
+ */
+typedef enum esp_mqtt_status_t { ESP_MQTT_STATUS_DISCONNECTED, ESP_MQTT_STATUS_CONNECTED } esp_mqtt_status_t;
+
+/**
+ * The status callback.
+ *
+ */
+typedef void (*esp_mqtt_status_callback_t)(void *settings, esp_mqtt_status_t);
 
 /**
  * Structure of mqtt config
@@ -46,6 +70,15 @@ typedef struct
 	bool esp_mqtt_connected;
 	bool esp_mqtt_error;
 	esp_mqtt_config_t esp_mqtt_cfg;
+	lwmqtt_client_t esp_mqtt_client;
+	#if !(defined(CONFIG_ESP_MQTT_TLS_ENABLE) && defined(CONFIG_ESP_MQTT_TLS_ONLY))
+	esp_lwmqtt_network_t esp_mqtt_network;
+	#endif
+	#if defined(CONFIG_ESP_MQTT_TLS_ENABLE)
+	esp_tls_lwmqtt_network_t esp_tls_mqtt_network;
+	#endif
+	esp_lwmqtt_timer_t esp_mqtt_timer1, esp_mqtt_timer2;
+	esp_mqtt_lwt_config_t esp_mqtt_lwt_config;
 } esp_mqtt_settings_t;
 
 /**
@@ -60,7 +93,7 @@ typedef struct
  *
  * @return Identifier of mqtt structure
  */
-esp_mqtt_config_t *esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_message_callback_t mcb, size_t buffer_size,
+esp_mqtt_settings_t *esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_message_callback_t mcb, size_t buffer_size,
                    int command_timeout);
 
 /**
@@ -85,7 +118,7 @@ void esp_mqtt_lwt(const char *topic, const char *payload, int qos, bool retained
  * @param cacert - Pointer to CA certificate.
  * @return Whether TLS configuration successful.
  */
-bool esp_mqtt_tls(bool verify, const unsigned char * cacert, size_t cacert_len);
+bool esp_mqtt_tls(esp_mqtt_settings_t *settings, bool verify, const unsigned char * cacert, size_t cacert_len);
 #endif
 
 /**
@@ -162,7 +195,7 @@ void esp_mqtt_stop();
 /**
  * Function delete mqtt config
  */
-void esp_mqtt_delete(esp_mqtt_config_t *cfg);
+void esp_mqtt_delete(esp_mqtt_settings_t *settings);
 
 /**
  * Function clear esp_mqtt_cfg
