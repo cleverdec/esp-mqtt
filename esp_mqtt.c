@@ -550,6 +550,7 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
 {
     bool err_memory = false;
     // acquire mutex
+    ESP_LOGI("!!!!!", "settings = %p", settings);
     ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
 #if (defined(CONFIG_ESP_MQTT_TLS_ONLY))
@@ -568,8 +569,6 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
         return ESP_OK;
     }
 
-    esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
-
     if (host == NULL || port == NULL)
     {
         ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: host or port = NULL");
@@ -578,30 +577,36 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
     else
     {
         // set host
-        settings->esp_mqtt_cfg.host = strdup(host);
-        (!settings->esp_mqtt_cfg.host) ? err_memory = true : 0;
+        if (!settings->esp_mqtt_cfg.host)
+        {
+            settings->esp_mqtt_cfg.host = strdup(host);
+            (!settings->esp_mqtt_cfg.host) ? err_memory = true : 0;
+        }
 
         //set port
-        settings->esp_mqtt_cfg.port = strdup(port);
-        (!settings->esp_mqtt_cfg.port) ? err_memory = true : 0;
+        if (!settings->esp_mqtt_cfg.port)
+        {
+            settings->esp_mqtt_cfg.port = strdup(port);
+            (!settings->esp_mqtt_cfg.port) ? err_memory = true : 0;
+        }
     }
 
     // set client id if provided
-    if (client_id != NULL)
+    if (client_id != NULL && !settings->esp_mqtt_cfg.client_id)
     {
         settings->esp_mqtt_cfg.client_id = strdup(client_id);
         (!settings->esp_mqtt_cfg.client_id) ? err_memory = true : 0;
     }
 
     // set username if provided
-    if (username != NULL)
+    if (username != NULL && !settings->esp_mqtt_cfg.username)
     {
         settings->esp_mqtt_cfg.username = strdup(username);
         (!settings->esp_mqtt_cfg.username) ? err_memory = true : 0;
     }
 
     // set password if provided
-    if (password != NULL)
+    if (password != NULL && !settings->esp_mqtt_cfg.password)
     {
         settings->esp_mqtt_cfg.password = strdup(password);
         (!settings->esp_mqtt_cfg.password) ? err_memory = true : 0;
@@ -699,6 +704,7 @@ bool esp_mqtt_publish(esp_mqtt_settings_t *settings, const char *topic, uint8_t 
 bool retained)
 {
     // acquire mutex
+    ESP_LOGI("!!esp_mqtt_publish!!!", "settings = %p", settings);
     ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
     // check if still connected
