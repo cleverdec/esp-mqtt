@@ -81,14 +81,34 @@ esp_mqtt_settings_t *esp_mqtt_init(esp_mqtt_status_callback_t scb, esp_mqtt_mess
 static void esp_mqtt_message_handler(lwmqtt_client_t *client, void *ref, lwmqtt_string_t topic,
                                      lwmqtt_message_t msg)
 {
+    char name_function_tag[] = "esp_mqtt_message_handler";
+
+    if (!ref || !client)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "ref or client = NULL");
+        return;
+    }
     QueueHandle_t esp_mqtt_event_queue = (QueueHandle_t)ref;
 
     // create message
     esp_mqtt_event_t *evt = calloc(1, sizeof(esp_mqtt_event_t));
 
+    if (!evt)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "Cannot allocate memory for evt");
+        return;
+    }
     // copy topic with additional null termination
     evt->topic.len = topic.len;
-    evt->topic.data = malloc((size_t) topic.len + 1);
+    evt->topic.data = calloc((size_t) topic.len + 1, sizeof(uint8_t));
+    if (!evt->topic.data)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "Cannot allocate memory for evt->topic.data");
+        return;
+    }
     memcpy(evt->topic.data, topic.data, (size_t) topic.len);
     evt->topic.data[topic.len] = 0;
 
@@ -96,14 +116,22 @@ static void esp_mqtt_message_handler(lwmqtt_client_t *client, void *ref, lwmqtt_
     evt->message.retained = msg.retained;
     evt->message.qos = msg.qos;
     evt->message.payload_len = msg.payload_len;
-    evt->message.payload = malloc((size_t) msg.payload_len + 1);
+    evt->message.payload = calloc((size_t) msg.payload_len + 1, sizeof(uint8_t));
+    if (!evt->message.payload)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG,
+                 "%s: %s", name_function_tag,
+                 "Cannot allocate memory for evt->message.payload");
+        return;
+    }
     memcpy(evt->message.payload, msg.payload, (size_t) msg.payload_len);
     evt->message.payload[msg.payload_len] = 0;
 
     // queue event
     if (xQueueSend(esp_mqtt_event_queue, &evt, 0) != pdTRUE)
     {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "xQueueSend: queue is full, dropping message");
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "xQueueSend: queue is full, dropping message");
         free(evt->topic.data);
         free(evt->message.payload);
         free(evt);
@@ -112,6 +140,11 @@ static void esp_mqtt_message_handler(lwmqtt_client_t *client, void *ref, lwmqtt_
 
 static void esp_mqtt_dispatch_events(esp_mqtt_settings_t *settings)
 {
+    if (!settings)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_dispatch_events: %s",
+                 "settings = NULL");
+    }
     // prepare event
     esp_mqtt_event_t *evt = NULL;
 
@@ -134,6 +167,13 @@ static void esp_mqtt_dispatch_events(esp_mqtt_settings_t *settings)
 
 static bool esp_mqtt_process_connect(esp_mqtt_settings_t *settings)
 {
+    char name_function_tag[] = "esp_mqtt_process_connect";
+    if (!settings)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "settings = NULL");
+        return false;
+    }
     // initialize the client
     lwmqtt_init(&settings->esp_mqtt_client, settings->esp_mqtt_write_buffer,
             settings->esp_mqtt_buffer_size, settings->esp_mqtt_read_buffer,
@@ -194,7 +234,7 @@ static bool esp_mqtt_process_connect(esp_mqtt_settings_t *settings)
 
     if (err != LWMQTT_SUCCESS)
     {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_connect: host: %s:%s : %d",
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: host: %s:%s : %d", name_function_tag,
                 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
         return false;
     }
@@ -235,8 +275,9 @@ static bool esp_mqtt_process_connect(esp_mqtt_settings_t *settings)
 
     if (err != LWMQTT_SUCCESS)
     {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_wait: host: %s:%s : %d",
-                settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: esp_lwmqtt_network_wait: host: %s:%s : %d",
+                name_function_tag, settings->esp_mqtt_cfg.host,
+                settings->esp_mqtt_cfg.port, err);
         return false;
     }
 
@@ -268,25 +309,28 @@ static bool esp_mqtt_process_connect(esp_mqtt_settings_t *settings)
 
     // attempt connection
     lwmqtt_return_code_t return_code;
-    err = lwmqtt_connect(&settings->esp_mqtt_client, options, will.topic.len ? &will : NULL, &return_code,
-            settings->esp_mqtt_command_timeout);
+    err = lwmqtt_connect(&settings->esp_mqtt_client, options,
+                         will.topic.len ? &will : NULL, &return_code,
+                         settings->esp_mqtt_command_timeout);
     if (err != LWMQTT_SUCCESS)
     {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_connect: %s:%s : %d",
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: lwmqtt_connect: %s:%s : %d", name_function_tag,
                 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
         return false;
     }
-
     return true;
 }
 
 static void esp_mqtt_process(void *pvParameters)
 {
-
+    char name_function_tag[] = "esp_mqtt_process";
     esp_mqtt_settings_t *settings;
+
     // connection loop
     if (!pvParameters)
     {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "settings = NULL");
         vTaskDelete(NULL);
         return;
     }
@@ -297,8 +341,9 @@ static void esp_mqtt_process(void *pvParameters)
     for (;;)
     {
         // log attempt
-        ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: begin connection to %s:%s attempt",
-                settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
+        ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: begin connection to %s:%s attempt",
+                 name_function_tag, settings->esp_mqtt_cfg.host,
+                 settings->esp_mqtt_cfg.port);
 
         // acquire mutex
         ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
@@ -307,8 +352,9 @@ static void esp_mqtt_process(void *pvParameters)
         if (esp_mqtt_process_connect(settings))
         {
             // log success
-            ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: connection to %s:%s attempt successful",
-                    settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
+            ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: connection to %s:%s attempt successful",
+                     name_function_tag, settings->esp_mqtt_cfg.host,
+                     settings->esp_mqtt_cfg.port);
 
             // set local flag
             settings->esp_mqtt_connected = true;
@@ -324,8 +370,9 @@ static void esp_mqtt_process(void *pvParameters)
         ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
         // log fail
-        ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_process: connection to %s:%s attempt failed",
-                settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
+        ESP_LOGW(ESP_MQTT_LOG_TAG, "%s: connection to %s:%s attempt failed",
+                 name_function_tag, settings->esp_mqtt_cfg.host,
+                 settings->esp_mqtt_cfg.port);
 
         // delay loop by 1s and yield to other processes
         vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -376,8 +423,9 @@ static void esp_mqtt_process(void *pvParameters)
 
         if (err != LWMQTT_SUCCESS)
         {
-            ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_select: host: %s:%s : %d",
-                    settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+            ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: esp_lwmqtt_network_select: host: %s:%s : %d",
+                     name_function_tag, settings->esp_mqtt_cfg.host,
+                     settings->esp_mqtt_cfg.port, err);
             ESP_MQTT_UNLOCK(settings->esp_mqtt_select_mutex);
             break;
         }
@@ -419,8 +467,9 @@ static void esp_mqtt_process(void *pvParameters)
 
             if (err != LWMQTT_SUCCESS)
             {
-                ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_lwmqtt_network_peek: host: %s:%s : %d",
-                        settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+                ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: esp_lwmqtt_network_peek: host: %s:%s : %d",
+                         name_function_tag, settings->esp_mqtt_cfg.host,
+                         settings->esp_mqtt_cfg.port, err);
                 ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
                 break;
             }
@@ -432,8 +481,9 @@ static void esp_mqtt_process(void *pvParameters)
                 err = lwmqtt_yield(&settings->esp_mqtt_client, available_bytes, settings->esp_mqtt_command_timeout);
                 if (err != LWMQTT_SUCCESS)
                 {
-                    ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_yield: host: %s:%s : %d",
-                            settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+                    ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: lwmqtt_yield: host: %s:%s : %d",
+                             name_function_tag, settings->esp_mqtt_cfg.host,
+                             settings->esp_mqtt_cfg.port, err);
                     ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
                     break;
                 }
@@ -444,8 +494,9 @@ static void esp_mqtt_process(void *pvParameters)
         err = lwmqtt_keep_alive(&settings->esp_mqtt_client, settings->esp_mqtt_command_timeout);
         if (err != LWMQTT_SUCCESS)
         {
-            ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_keep_alive: host: %s:%s : %d",
-                    settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port, err);
+            ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: lwmqtt_keep_alive: host: %s:%s : %d",
+                    name_function_tag, settings->esp_mqtt_cfg.host,
+                    settings->esp_mqtt_cfg.port, err);
             ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
             break;
         }
@@ -490,8 +541,9 @@ static void esp_mqtt_process(void *pvParameters)
     // release mutex
     ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_process: host: %s:%s exit task",
-            settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port);
+    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: host: %s:%s exit task",
+             name_function_tag, settings->esp_mqtt_cfg.host,
+             settings->esp_mqtt_cfg.port);
 
     // call callback if existing
     if (settings->esp_mqtt_status_callback)
@@ -506,6 +558,13 @@ static void esp_mqtt_process(void *pvParameters)
 void esp_mqtt_lwt(const char *topic, const char *payload, int qos,
 				  bool retained, esp_mqtt_settings_t *settings)
 {
+    char name_function_tag[] = "esp_mqtt_lwt";
+    if (!settings)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "settings = NULL");
+    }
+
     // acquire mutex
     ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
@@ -527,12 +586,28 @@ void esp_mqtt_lwt(const char *topic, const char *payload, int qos,
     if (topic != NULL)
     {
     	settings->esp_mqtt_lwt_config.topic = strdup(topic);
+    	if (!settings->esp_mqtt_lwt_config.topic)
+    	{
+    	    ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s",
+    	            name_function_tag,
+    	            "Cannot allocate memory for duplicate topic");
+    	    ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+    	    return;
+    	}
     }
 
     // set payload if provided
     if (payload != NULL)
     {
         settings->esp_mqtt_lwt_config.payload = strdup(payload);
+        if (!settings->esp_mqtt_lwt_config.payload)
+        {
+            ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s",
+                    name_function_tag,
+                    "Cannot allocate memory for duplicate payload");
+            ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
+            return;
+        }
     }
 
     // set qos
@@ -548,15 +623,24 @@ void esp_mqtt_lwt(const char *topic, const char *payload, int qos,
 esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_id,
                          const char *username, const char *password, esp_mqtt_settings_t *settings)
 {
+    char name_function_tag[] = "esp_mqtt_start";
+
+    if (!settings)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "settings = NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
     bool err_memory = false;
     // acquire mutex
-    ESP_LOGI("!!!!!", "settings = %p", settings);
     ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
 #if (defined(CONFIG_ESP_MQTT_TLS_ONLY))
     if (esp_tls_mqtt_network.enable == false)
     {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: Call esp_mqtt_tls() before!");
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: host %s:%s %s", name_function_tag,
+                 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port,
+                 "Call esp_mqtt_tls() before!");
         ESP_MQTT_UNLOCK_MAIN();
         return ESP_FAIL;
     }
@@ -564,14 +648,18 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
     // check if already running
     if (settings->esp_mqtt_running)
     {
-        ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_start: already running");
+        ESP_LOGW(ESP_MQTT_LOG_TAG, "%s: host %s:%s %s", name_function_tag,
+                 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port,
+                 "already running");
         ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return ESP_OK;
     }
 
     if (host == NULL || port == NULL)
     {
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: host or port = NULL");
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "host or port = NULL");
+        ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return ESP_ERR_INVALID_ARG;
     }
     else
@@ -615,7 +703,8 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
     if (err_memory)
     {
         esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: No memory for allocate esp_mqtt_cfg");
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: host %s:%s %s", name_function_tag,
+                 host, port, "No memory for allocate esp_mqtt_cfg");
         ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return ESP_ERR_NO_MEM;
     }
@@ -628,7 +717,9 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
     if (!settings->esp_mqtt_task)
     {
         esp_mqtt_clear_cfg(&settings->esp_mqtt_cfg);
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "esp_mqtt_start: No memory for allocate esp_mqtt task");
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: host %s:%s %s",
+                 name_function_tag, host, port,
+                 "No memory for allocate esp_mqtt task");
         ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return ESP_ERR_NO_MEM;
     }
@@ -642,13 +733,20 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
 
 bool esp_mqtt_subscribe(esp_mqtt_settings_t *settings, const char *topic, int qos)
 {
+    char name_function_tag[] = "esp_mqtt_subscribe";
+
+    if (!settings)
+    {
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
+                 "settings = NULL");
+    }
     // acquire mutex
     ESP_MQTT_LOCK(settings->esp_mqtt_main_mutex);
 
     // check if still connected
     if (!settings->esp_mqtt_connected)
     {
-        ESP_LOGW(ESP_MQTT_LOG_TAG, "esp_mqtt_subscribe: not connected");
+        ESP_LOGW(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag, "not connected");
         ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
@@ -659,7 +757,9 @@ bool esp_mqtt_subscribe(esp_mqtt_settings_t *settings, const char *topic, int qo
     if (err != LWMQTT_SUCCESS)
     {
         settings->esp_mqtt_error = true;
-        ESP_LOGE(ESP_MQTT_LOG_TAG, "lwmqtt_subscribe_one: %d", err);
+        ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: host %s:%s %s = %d", name_function_tag,
+                 settings->esp_mqtt_cfg.host, settings->esp_mqtt_cfg.port,
+                 "lwmqtt_subscribe_one: %d", err);
         ESP_MQTT_UNLOCK(settings->esp_mqtt_main_mutex);
         return false;
     }
