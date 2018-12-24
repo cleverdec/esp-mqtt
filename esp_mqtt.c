@@ -2,9 +2,7 @@
 
 #define ESP_MQTT_LOG_TAG "esp_mqtt"
 
-#define ESP_MQTT_LOCK(mutex) \
-  do {                       \
-  } while (xSemaphoreTake(mutex, portMAX_DELAY) != pdPASS)
+#define ESP_MQTT_LOCK(mutex) xSemaphoreTake(mutex, portMAX_DELAY)
 
 #define ESP_MQTT_UNLOCK(mutex) xSemaphoreGive(mutex)
 
@@ -83,7 +81,7 @@ static void esp_mqtt_message_handler(lwmqtt_client_t *client, void *ref, lwmqtt_
 {
     char name_function_tag[] = "esp_mqtt_message_handler";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
     if (!ref || !client)
     {
         ESP_LOGE(ESP_MQTT_LOG_TAG, "%s: %s", name_function_tag,
@@ -141,7 +139,7 @@ static void esp_mqtt_message_handler(lwmqtt_client_t *client, void *ref, lwmqtt_
 
 static void esp_mqtt_dispatch_events(esp_mqtt_settings_t *settings)
 {
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_dispatch_events: Enter!");
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "esp_mqtt_dispatch_events: Enter!");
 
     if (!settings)
     {
@@ -173,7 +171,7 @@ static bool esp_mqtt_process_connect(esp_mqtt_settings_t *settings)
 {
     char name_function_tag[] = "esp_mqtt_process_connect";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (!settings)
     {
@@ -332,7 +330,7 @@ static void esp_mqtt_process(void *pvParameters)
 {
     char name_function_tag[] = "esp_mqtt_process";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     esp_mqtt_settings_t *settings;
 
@@ -486,6 +484,7 @@ static void esp_mqtt_process(void *pvParameters)
 
             // yield client only if there is still data to read since select might unblock because of incoming ack packets
             // that are already handled until we get to this point
+            //ESP_LOGI("process", "before lwmqtt_yield");
             if (available_bytes > 0)
             {
                 err = lwmqtt_yield(&settings->esp_mqtt_client, available_bytes, settings->esp_mqtt_command_timeout);
@@ -570,7 +569,7 @@ void esp_mqtt_lwt(const char *topic, const char *payload, int qos,
 {
     char name_function_tag[] = "esp_mqtt_lwt";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (!settings)
     {
@@ -638,7 +637,7 @@ esp_err_t esp_mqtt_start(const char *host, const char *port, const char *client_
 {
     char name_function_tag[] = "esp_mqtt_start";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (!settings)
     {
@@ -837,7 +836,7 @@ bool retained)
 {
     char name_function_tag[] = "esp_mqtt_publish";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (!settings)
     {
@@ -889,7 +888,7 @@ void esp_mqtt_stop(esp_mqtt_settings_t *settings)
 {
     char name_function_tag[] = "esp_mqtt_stop";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (!settings)
     {
@@ -942,7 +941,7 @@ void esp_mqtt_stop(esp_mqtt_settings_t *settings)
     }
 #else
     {
-    esp_lwmqtt_network_disconnect(&settings->esp_mqtt_network);
+        esp_lwmqtt_network_disconnect(&settings->esp_mqtt_network);
     }
 #endif
 
@@ -964,7 +963,7 @@ void esp_mqtt_delete(esp_mqtt_settings_t *settings)
 {
     char name_function_tag[] = "esp_mqtt_delete";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (!settings)
     {
@@ -1033,7 +1032,7 @@ void esp_mqtt_clear_cfg(esp_mqtt_config_t *cfg)
 {
     char name_function_tag[] = "esp_mqtt_clear_cfg";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (cfg)
     {
@@ -1074,7 +1073,7 @@ void esp_mqtt_lwt_clear_cfg(esp_mqtt_lwt_config_t *cfg)
 {
     char name_function_tag[] = "esp_mqtt_clear_cfg";
 
-    ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
+    //ESP_LOGI(ESP_MQTT_LOG_TAG, "%s: Enter!", name_function_tag);
 
     if (cfg->topic)
     {
